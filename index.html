@@ -1,0 +1,181 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>DEAL Navotas</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>tailwind.config={theme:{extend:{fontFamily:{sans:['Inter','sans-serif'],mono:['JetBrains Mono','monospace']}}}}</script>
+<style type="text/tailwindcss">
+@layer components{
+.badge{@apply text-xs font-mono uppercase px-2 py-0.5 rounded font-semibold inline-block}
+.btn{@apply w-full rounded-xl bg-[#006878] hover:bg-[#0B4A5D] text-white font-semibold py-3 text-sm disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed}
+.btn2{@apply rounded-xl border border-slate-300 bg-white font-semibold py-3 px-4 text-sm hover:bg-slate-50}
+.inp{@apply w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#006878]}
+.lbl{@apply block text-sm font-medium mb-1 mt-3}
+.card{@apply rounded-xl bg-white border border-slate-200 shadow-sm}
+.pill{@apply px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap hover:bg-slate-100}
+.pill.on{@apply bg-[#006878] text-white}}
+</style><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script><script src="config.js"></script></head>
+<body class="bg-slate-50 text-slate-900 font-sans"><div id="app"></div><div id="toast" class="fixed top-4 right-4 z-50 space-y-2"></div>
+<script>
+const $=s=>document.querySelector(s),fmt=n=>'₱'+(+n).toLocaleString('en-PH',{maximumFractionDigits:2});
+const TABS={vendor:[['floor','Fresh Catches Floor'],['hati','Hati-Hati Banyera'],['taripa','Taripa Calculator'],['quality','Suri-Isda Guard'],['sync','Offline Sync'],['passes','Passes & Ledger']],
+checker:[['intake','Dockside Intake'],['quality','Validation Register'],['sync','Offline Sync']],
+broker:[['auction','Consignations & Bids'],['taripa','Taripa Calculator'],['passes','Escrow & Passes']]};
+const TAG={EN:'Pick fresh catch. Share the tub, not the quality.',TL:'Pumili ng sariwang huli. Hati sa bañera, hindi sa kalidad.',TAGLISH:'Pili sa sariwang huli. Hati-hati sa bañera, hindi kalidad.'};
+let LR='vendor',CAT='All';
+const LS=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
+let S={user:null,role:null,tab:'floor',lang:LS('deal-lang','TAGLISH'),catches:LS('deal-cache',[]),passes:[],queue:LS('deal-q',[]),checks:[],sel:null,offline:false};
+const save=()=>{try{localStorage.setItem('deal-q',JSON.stringify(S.queue));localStorage.setItem('deal-lang',JSON.stringify(S.lang));localStorage.setItem('deal-cache',JSON.stringify(S.catches.map(({photo,...r})=>r)))}catch(e){}};
+let sb,AM='in',fails=0,lockUntil=0,idle,ch;
+const esc=s=>String(s??'').replace(/[&<>"'`]/g,'');
+const online=()=>!S.offline&&navigator.onLine;
+const find=id=>S.catches.find(c=>c.id===id);
+const open=c=>c.kg-c.claimed;
+const tar=(p,kg)=>{const base=p*kg,port=2.5*kg,comm=base*.05,ice=1.5*kg,total=base+port+comm+ice;return{base,port,comm,ice,total,eff:kg?total/kg:0}};
+function toast(m,bad){const d=document.createElement('div');d.className='px-4 py-2 rounded-lg text-sm text-white shadow '+(bad?'bg-red-600':'bg-[#0B4A5D]');d.textContent=m;$('#toast').append(d);setTimeout(()=>d.remove(),3500)}
+const vl=id=>($('#'+id)||{}).value||'';
+
+/* ---------- auth + data ---------- */
+const PIERS=['Pier 1 Bay A (Dagupan & GenSan Vessels)','Pier 2 Dock B','Pier 3 Slipway'];
+const LBL={vendor:['Mobile Phone Number','09XX-XXX-XXXX'],checker:['Tally Officer Badge ID','TC-NAV-###'],broker:['Broker Official License #','BKR-NAV-####']};
+function login(){return`<div class="fixed inset-0 bg-[#0B0E17]/70 flex items-center justify-center p-4 z-40 overflow-y-auto"><div class="card w-full max-w-md p-6">
+ <span class="badge bg-[#006878] text-white">Navotas Port Authority verified access</span>
+ <h2 class="font-mono font-bold text-xl mt-2">Sign In: DEAL Port Access</h2><p class="text-sm text-slate-500">Authorized sign-in for micro-vendors, checkers, and consignee brokers</p>
+ <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl my-4">${[['vendor','Micro-Vendor'],['checker','Pier Checker'],['broker','Consignee Broker']].map(([r,l])=>`<button onclick="LR='${r}';render()" class="py-2 rounded-lg text-sm font-medium ${LR===r?'bg-[#006878] text-white':''}">${l}</button>`).join('')}</div>
+ ${sb?'':'<p class="text-sm bg-amber-50 border border-amber-300 rounded-lg p-3">Setup needed: add your Supabase URL and anon key to config.js.</p>'}
+ <label class="lbl">${LBL[LR][0]}</label><input id="f1" class="inp" placeholder="${LBL[LR][1]}" autocomplete="username">
+ <label class="lbl">Password</label><input id="f2" type="password" class="inp" autocomplete="${AM==='up'?'new-password':'current-password'}" placeholder="${AM==='up'?'8+ characters, letters and numbers':''}">
+ ${AM==='up'&&LR==='checker'?`<label class="lbl">Assigned Dockside Pier Station</label><select id="f3" class="inp">${PIERS.map(x=>`<option>${x}</option>`).join('')}</select>`:''}
+ ${AM==='up'&&LR!=='vendor'?'<p class="text-xs text-slate-500 mt-2">Checker and broker accounts need admin approval before first sign-in.</p>':''}
+ <div class="text-xs text-[#006878] flex justify-between my-3 font-medium"><span>TLS 1.3 / AES-256 encrypted</span><span>Auto sign-out after 15 min idle</span></div>
+ <button class="btn" onclick="doLogin()">${AM==='in'?{vendor:'ENTER MICRO-VENDOR PORTAL',checker:'ENTER PIER CHECKER PORTAL',broker:'ENTER BROKER PORTAL'}[LR]:'CREATE ACCOUNT'}</button>
+ <button class="w-full text-sm text-[#006878] font-semibold mt-3" onclick="AM=AM==='in'?'up':'in';render()">${AM==='in'?'New here? Create an account':'Have an account? Sign in'}</button></div></div>`}
+async function doLogin(){
+ if(!sb)return toast('Add your Supabase URL and anon key to config.js first.',1);
+ const wait=Math.ceil((lockUntil-Date.now())/1000);if(wait>0)return toast(`Too many attempts. Try again in ${wait}s.`,1);
+ const a=vl('f1').trim(),p=vl('f2'),re={vendor:/^09\d{2}-?\d{3}-?\d{4}$/,checker:/^TC-NAV-\d+$/i,broker:/^BKR-NAV-\d+$/i}[LR];
+ if(!re.test(a))return toast(`Enter a valid ${LBL[LR][0]} (${LBL[LR][1]}).`,1);
+ if(AM==='up'&&(p.length<8||!/\d/.test(p)||!/[a-z]/i.test(p)))return toast('Password needs 8+ characters with letters and numbers.',1);
+ const email=a.replace(/-/g,'').toLowerCase()+'@deal-navotas.app';
+ if(AM==='up'){const{data,error}=await sb.auth.signUp({email,password:p});
+  if(error||!data.session)return toast(error?error.message:'Sign-up needs "Confirm email" turned off in Supabase.',1);
+  const{error:e2}=await sb.from('profiles').insert({id:data.user.id,role:LR,approved:LR==='vendor',ident:a.toUpperCase(),station:LR==='checker'?vl('f3'):null});
+  if(e2){await sb.auth.signOut();return toast('Could not create the profile. Try again.',1)}
+  AM='in';if(LR!=='vendor'){await sb.auth.signOut();render();return toast('Account created. An admin must approve it before you can sign in.')}
+  await enter(LR);return}
+ const{error}=await sb.auth.signInWithPassword({email,password:p});
+ if(error){if(++fails>=5){fails=0;lockUntil=Date.now()+60000}return toast('Wrong ID or password.',1)}
+ fails=0;await enter(LR)}
+async function enter(want){
+ const{data:{user}}=await sb.auth.getUser();if(!user)return false;
+ const{data:p}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
+ if(!p||!p.approved||(want&&p.role!==want)){await sb.auth.signOut();toast(!p?'No profile found for this account.':!p.approved?'Account is awaiting admin approval.':'This account is not registered for this portal.',1);return false}
+ S.user=p.ident;S.role=p.role;S.station=p.station||'Pier 1-3';S.tab=TABS[p.role][0][0];
+ await load(1);ch=sb.channel('deal').on('postgres_changes',{event:'*',schema:'public'},()=>load(1)).subscribe();bump();render();return true}
+async function logout(){try{await sb.auth.signOut();if(ch)sb.removeChannel(ch)}catch(e){}S.user=null;S.catches=[];S.passes=[];S.checks=[];render()}
+const bump=()=>{clearTimeout(idle);if(S.user)idle=setTimeout(async()=>{await logout();toast('Signed out after 15 minutes idle.')},9e5)};
+['click','keydown','touchstart'].forEach(e=>addEventListener(e,bump,{passive:true}));
+async function load(q){
+ const[c,p,k]=await Promise.all([sb.from('catches').select('*').order('id'),sb.from('passes').select('*').order('created_at',{ascending:false}),sb.from('checks').select('*').order('created_at',{ascending:false}).limit(50)]);
+ if(c.error)return toast('Could not load data. Showing the last saved copy.',1);
+ const old=Object.fromEntries(S.catches.map(x=>[x.id,x]));
+ S.catches=c.data.map(x=>{x.hist=(old[x.id]&&old[x.id].hist)||[];if(old[x.id]&&old[x.id].bid!==x.bid)x.hist.push(`${new Date().toLocaleTimeString()} · ${fmt(x.bid)}/kg`);['name','sci','cat','grade','src'].forEach(f=>x[f]=esc(x[f]));if(!/^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(x.photo||''))x.photo=null;return x});
+ S.passes=(p.data||[]).map(x=>({...x,name:esc(x.name),t:new Date(x.created_at).toLocaleString()}));
+ S.checks=(k.data||[]).map(x=>({id:x.cid,name:esc(x.name),res:x.res,by:esc(x.by_name),t:new Date(x.created_at).toLocaleString()}));
+ if(!find(S.sel))S.sel=S.catches[0]&&S.catches[0].id;
+ if(!q||!/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))render()}
+
+/* ---------- shell ---------- */
+function head(){return`<div class="bg-[#0B4A5D] text-white text-xs font-mono px-4 py-2 overflow-x-auto whitespace-nowrap">NAVOTAS PIER 1-3 → DIVISORIA → SUKI PALENGKE · VERIFIED PORT ESCROW</div>
+<header class="bg-white border-b"><div class="max-w-6xl mx-auto p-4 flex flex-wrap items-center gap-3 justify-between">
+<div><span class="font-mono font-bold text-2xl text-[#0B4A5D]">DEAL</span> <span class="text-xs text-slate-500">NAVOTAS</span></div>
+${S.user?`<div class="text-sm"><b>${S.role==='vendor'?'Micro-Vendor':S.role==='checker'?'Pier Checker':'Consignee Broker'}</b><br><span class="text-slate-500 text-xs">${S.user} · ${S.station}</span></div>
+<div class="flex items-center gap-2"><button onclick="S.offline=!S.offline;render()" class="badge ${online()?'bg-emerald-100 text-emerald-800':'bg-amber-100 text-amber-800'}">${online()?'● Online':'● Offline'}</button>
+<div class="flex rounded-lg border overflow-hidden text-xs font-mono">${['EN','TL','TAGLISH'].map(l=>`<button onclick="S.lang='${l}';render()" class="px-2 py-1.5 ${S.lang===l?'bg-[#0B4A5D] text-white':''}">${l}</button>`).join('')}</div>
+<button onclick="logout()" class="text-sm text-[#006878] font-semibold">Switch portal ↗</button></div>`:`<span class="text-sm text-slate-500 hidden sm:block">Digital Consignation System for Fisheries & Seafood Trade</span>`}</div></header>`}
+function nav(){const t=TABS[S.role];return`<nav class="hidden md:block bg-white border-b"><div class="max-w-6xl mx-auto p-2 flex gap-1 overflow-x-auto">${t.map(([k,l])=>`<button class="pill ${S.tab===k?'on':''}" onclick="S.tab='${k}';render()">${l}${k==='sync'&&S.queue.length?` (${S.queue.length})`:''}</button>`).join('')}</div></nav>`}
+const bottom=()=>`<nav class="md:hidden fixed bottom-0 inset-x-0 bg-white border-t flex overflow-x-auto z-30" style="padding-bottom:env(safe-area-inset-bottom,0px)">${TABS[S.role].map(([k,l])=>`<button onclick="S.tab='${k}';render()" class="flex-1 min-w-[84px] py-3 text-[11px] font-medium ${S.tab===k?'text-[#006878] border-t-2 border-[#006878]':'text-slate-500'}">${l.split(' ')[0]}<br>${l.split(' ').slice(1).join(' ')}</button>`).join('')}</nav>`;
+const h1=(a,b)=>`<div class="mb-4"><h1 class="font-mono font-bold text-2xl">${a}</h1><p class="text-sm text-slate-600">${b}</p></div>`;
+
+/* ---------- vendor ---------- */
+function cardC(c,vend){const o=open(c),p=c.claimed/c.kg*100;
+ return`<article class="card overflow-hidden"><div class="h-32 bg-gradient-to-br from-[#0B4A5D] to-[#006878] p-3 flex justify-between"${c.photo?` style="background:url(${c.photo}) center/cover"`:''}><span class="badge bg-sky-100 text-sky-800 h-fit">${c.fresh}/10 Fresh</span><span class="font-mono text-xs text-white/80">${c.id}</span></div>
+<div class="p-4"><div class="flex justify-between"><span class="badge ${c.verified?'bg-teal-100 text-teal-800':'bg-yellow-100 text-yellow-800'}">${c.verified?'Suri-Isda verified':'Pending audit'}</span><span class="text-xs text-slate-500">${c.cat}</span></div>
+<h3 class="font-semibold text-lg mt-2">${c.name}</h3><p class="text-xs italic text-slate-500">${c.sci}</p><p class="font-mono text-xs mt-1">GRADE ${c.grade.toUpperCase()}</p>
+<div class="flex justify-between items-end my-2"><div><span class="font-mono text-2xl font-bold">${fmt(c.price)}/kg</span><div class="text-xs text-slate-500">${c.src}</div></div><div class="text-right text-sm font-mono">${c.kg} kg / tub<br><span class="text-slate-500 text-xs">${c.tubs} tubs available</span></div></div>
+<div class="text-xs flex justify-between"><b>Hati-Hati Bañera</b><span>${c.claimed}/${c.kg} kg</span></div><div class="h-2 bg-slate-200 rounded mt-1"><div class="h-2 bg-[#006878] rounded" style="width:${p}%"></div></div>
+<div class="text-xs flex justify-between text-slate-500 mt-1"><span>${c.claimed} kg claimed</span><span>${o} kg open</span></div>
+${vend?`<button class="btn mt-3" ${o<=0||!c.verified?'disabled':''} onclick="claim('${c.id}')">${!c.verified?'Awaiting Suri-Isda check':o<=0?'Fully claimed':'+ Claim Portion (Hati-Hati)'}</button>`:''}</div></article>`}
+function floor(hati){const cats=['All',...new Set(S.catches.map(c=>c.cat))];let l=S.catches.filter(c=>CAT==='All'||c.cat===CAT);if(hati)l=l.filter(c=>c.claimed>0&&open(c)>0);
+ return h1(hati?'Hati-Hati Banyera':'Fresh Catches Floor',TAG[S.lang])+`<div class="flex gap-2 overflow-x-auto mb-4">${cats.map(x=>`<button class="pill border ${CAT===x?'on':''}" onclick="CAT='${x}';render()">${x}${x==='All'?' · '+S.catches.length:''}</button>`).join('')}</div>
+ <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">${l.map(c=>cardC(c,1)).join('')||'<p class="text-slate-500">No portions are open right now. Check the Fresh Catches Floor.</p>'}</div>`}
+function claim(id){const c=find(id),o=open(c),kg=parseFloat(prompt(`How many kg to claim? (${o} kg open)`,Math.min(10,o)));
+ if(!kg||kg<=0||kg>o)return toast(`Enter an amount from 1 to ${o} kg.`,1);
+ if(online())doClaim(id,kg);else{S.queue.push({sid:'SYNC-'+Date.now().toString(36).slice(-4).toUpperCase(),id,kg,t:new Date().toLocaleTimeString()});toast('Offline: claim saved on this device. Sync when online.');render()}}
+async function doClaim(id,kg){const{error}=await sb.rpc('claim_portion',{p_cid:id,p_kg:kg});if(error)return toast(error.message,1);toast('Portion claimed.');load(1)}
+async function syncNow(){if(!online())return toast('Still offline. Reconnect to sync.',1);const q=S.queue;S.queue=[];let ok=0;for(const x of q){const{error}=await sb.rpc('claim_portion',{p_cid:x.id,p_kg:x.kg});if(error)toast(`${x.sid}: ${error.message}`,1);else ok++}toast(`${ok} of ${q.length} transaction(s) synced.`);load(1)}
+function syncV(){return h1('Offline Sync Engine','Transactions made without signal are stored here until you sync.')+(S.queue.length?S.queue.map(q=>`<div class="card p-4 mb-3"><span class="badge bg-yellow-100 text-yellow-800">Stored locally</span><div class="font-mono text-sm mt-1">${q.sid} · ${q.kg} kg ${(find(q.id)||{}).name} · ${q.t}</div></div>`).join('')+`<button class="btn" onclick="syncNow()">Sync pending transactions</button>`:`<p class="text-slate-500">Nothing pending. Tap the status badge in the header to simulate offline.</p>`)}
+function passes(){const tot=S.passes.reduce((a,p)=>a+p.total,0),esc=S.passes.filter(p=>p.status==='escrow');
+ return h1('My Passes & Ledger',`${S.passes.length} passes · ${fmt(tot)} total · ${esc.length} in escrow`)+(S.passes.map(p=>`<div class="card p-4 mb-3 flex flex-wrap justify-between gap-3 items-center"><div><div class="font-mono text-xs text-slate-500">${p.id}</div><b>${p.name}</b><div class="text-sm">${p.kg} kg · ${fmt(p.total)} · ${p.t}</div></div>
+ <div class="text-right"><span class="badge ${p.status==='escrow'?'bg-yellow-100 text-yellow-800':'bg-teal-100 text-teal-800'}">${p.status==='escrow'?'Escrow held':'Released'}</span>${S.role==='broker'&&p.status==='escrow'?`<br><button class="btn2 mt-2 !py-1.5" onclick="release('${p.id}')">Approve escrow release</button>`:''}</div></div>`).join('')||'<p class="text-slate-500">No passes yet. Claim a portion on the Fresh Catches Floor.</p>')}
+async function release(id){const{error}=await sb.rpc('release_escrow',{p_id:id});if(error)return toast(error.message,1);toast('Escrow released.');load(1)}
+
+/* ---------- taripa ---------- */
+function taripaV(){const c=find(S.sel)||S.catches[0];return h1('Taripa Calculator','Transparent receipt. Estimate only, not a statement of independently verified law.')+`<div class="card p-5 max-w-lg"><label class="lbl !mt-0">Catch</label><select id="tc" class="inp" onchange="S.sel=this.value;calc()">${S.catches.map(x=>`<option value="${x.id}" ${x.id===c.id?'selected':''}>${x.name}</option>`).join('')}</select><label class="lbl">Weight (kg)</label><input id="tk" type="number" min="1" value="${c.kg}" class="inp" oninput="calc()"><div id="tr" class="mt-4"></div></div>`}
+function calc(){const c=find(vl('tc')),kg=+vl('tk')||0,t=tar(c.price,kg),r=(a,b)=>`<div class="flex justify-between py-1.5 border-b text-sm"><span>${a}</span><b class="font-mono">${fmt(b)}</b></div>`;
+ $('#tr').innerHTML=r(`Base fish price (${fmt(c.price)} × ${kg} kg)`,t.base)+r('Port fee (₱2.50/kg)',t.port)+r('Consignee commission (5%)',t.comm)+r('Ice / tub handling',t.ice)+`<div class="flex justify-between pt-3 text-lg font-bold"><span>Total payable</span><span class="font-mono">${fmt(t.total)}</span></div><div class="text-right text-sm text-[#006878] font-mono">Effective ${fmt(t.eff)}/kg</div>`}
+
+/* ---------- checker ---------- */
+const F=(n,l,v,t='text')=>`<div><label class="lbl">${l} *</label><input name="${n}" type="${t}" placeholder="e.g. ${v}" class="inp"></div>`;
+function intake(){const sel=(n,l,o)=>`<div><label class="lbl">${l} *</label><select name="${n}" class="inp">${o.map(x=>`<option>${x}</option>`).join('')}</select></div>`;
+ return h1('Dockside Intake & Inspection','Timbang. Suri. Tala. Physical checks first, verify after.')+`<div class="bg-[#0B0E17] text-white rounded-xl p-4 mb-4 font-mono text-sm">ASSIGNED STATION: ${S.station} · Tally officer ${S.user}</div>
+<div class="grid lg:grid-cols-2 gap-4 items-start"><form class="card p-5" onsubmit="logCatch(event)"><h2 class="font-mono font-bold text-lg">Log Incoming Catch</h2><span class="badge bg-yellow-100 text-yellow-800">Pending physical audit</span>
+${F('name','Common name','Galunggong (Round Scad)')}${F('local','Local / trade name','Dagupan Blackfin Galunggong')}${F('sci','Scientific species','Decapterus punctatus')}
+<div class="grid grid-cols-2 gap-3">${sel('cat','Category',['Pelagic','Finfish','Freshwater','Crustacean'])}${sel('grade','Declared grade',['AAA Pier Fresh','AAA Export Prime','A Dockside Fresh'])}${F('kg','Tub weight (kg)',40,'number')}${F('tubs','Available tubs',15,'number')}${F('base','Wholesale base (₱/kg)',185,'number')}${F('start','Starting bid (₱/kg)',175,'number')}</div>
+${sel('station','Landing station',PIERS)}${F('vessel','Vessel / source','F/V San Miguel Navotas')}<label class="lbl">Catch photo (optional)</label><input id="ph" type="file" accept="image/*" class="inp"><button class="btn mt-4">+ Log Incoming Catch</button></form>
+<div class="card p-5"><h2 class="font-mono font-bold text-lg">Suri-Isda Quality Guard</h2><span class="badge bg-yellow-100 text-yellow-800">Pending inspection</span>
+<label class="lbl">Batch / tub ID *</label><input id="qb" class="inp" placeholder="e.g. CAT-007" list="bl"><datalist id="bl">${S.catches.map(c=>`<option>${c.id}`).join('')}</datalist>
+${[['Bottom core sample','Inspect the bottom layer, not just the top.'],['Gill & eye freshness','Clear eyes, firm flesh, bright red gills.'],['Weight and species match','Match the actual catch to the declared species and weight.'],['Multi-angle proof reviewed','Review evidence from top, middle and bottom layers.']].map(([a,b])=>`<label class="flex gap-3 border rounded-lg p-3 mt-2 cursor-pointer"><input type="checkbox" class="chk mt-1"><span><b class="text-sm">${a}</b><br><span class="text-xs text-slate-500">${b}</span></span></label>`).join('')}
+<div class="grid grid-cols-3 gap-2 mt-3 text-xs text-center">${['Top','Middle','Bottom'].map(x=>`<label class="border-2 border-dashed rounded-lg p-3 cursor-pointer">${x} +<input type="file" accept="image/*" class="hidden"></label>`).join('')}</div>
+<div class="flex gap-2 mt-4"><button class="btn2" onclick="validate(0)">Flag issue</button><button class="btn flex-1" onclick="validate(1)">Record validation</button></div></div></div>`}
+const shrink=f=>new Promise(r=>{if(!f)return r(null);const i=new Image,u=URL.createObjectURL(f);i.onload=()=>{const k=Math.min(1,640/i.width),c=document.createElement('canvas');c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext('2d').drawImage(i,0,0,c.width,c.height);URL.revokeObjectURL(u);r(c.toDataURL('image/jpeg',.7))};i.onerror=()=>r(null);i.src=u});
+async function logCatch(e){e.preventDefault();const d=Object.fromEntries(new FormData(e.target));
+ if(['name','local','sci','kg','tubs','base','start','vessel'].some(k=>!String(d[k]).trim()))return toast('Fill in every required field before logging.',1);
+ if(+d.start>+d.base||+d.kg<=0||+d.tubs<=0)return toast('Check the numbers: starting bid cannot exceed the base, and values must be above 0.',1);
+ const id='CAT-'+String(Math.max(0,...S.catches.map(c=>+c.id.slice(4)))+1).padStart(3,'0');
+ const{error}=await sb.from('catches').insert({id,name:esc(d.local).slice(0,80),sci:esc(d.sci).slice(0,80),cat:d.cat,grade:d.grade,price:+d.base,start:+d.start,bid:+d.start,kg:+d.kg,tubs:+d.tubs,claimed:0,verified:false,src:esc(d.vessel).slice(0,60)+' · '+d.station,fresh:0,photo:await shrink($('#ph').files[0])});
+ if(error)return toast(error.message,1);toast(`${id} logged. It's live on the Fresh Catches Floor as pending audit.`);await load(1);e.target&&e.target.reset&&0}
+async function validate(pass){const id=vl('qb').trim().toUpperCase(),c=find(id);if(!c)return toast('Batch ID not found. Enter or pick an existing CAT-### ID.',1);
+ const n=[...document.querySelectorAll('.chk')].filter(x=>x.checked).length;
+ if(pass&&n<4)return toast(`${n} of 4 checks confirmed. All four are required to pass.`,1);
+ const u=await sb.from('catches').update({verified:!!pass,fresh:pass&&!c.fresh?9:c.fresh}).eq('id',id);if(u.error)return toast(u.error.message,1);
+ await sb.from('checks').insert({cid:id,name:c.name,res:pass?'Passed':'Flagged',by_name:S.user});
+ toast(pass?`${id} passed Suri-Isda.`:`${id} flagged for review.`,!pass);load(1)}
+function register(){const pend=S.catches.filter(c=>!c.verified&&!S.checks.some(k=>k.id===c.id));
+ return h1('Validation Register','Recent intake records and inspection results.')+(S.checks.map(k=>`<div class="card p-4 mb-2 flex justify-between"><div><span class="font-mono text-xs">${k.id}</span> <b>${k.name}</b><div class="text-xs text-slate-500">${k.by} · ${k.t}</div></div><span class="badge ${k.res==='Passed'?'bg-teal-100 text-teal-800':'bg-red-100 text-red-800'} h-fit">${k.res}</span></div>`).join('')+pend.map(c=>`<div class="card p-4 mb-2 flex justify-between"><div><span class="font-mono text-xs">${c.id}</span> <b>${c.name}</b></div><span class="badge bg-yellow-100 text-yellow-800 h-fit">Pending audit</span></div>`).join('')||'<p class="text-slate-500">No validation records yet. Completed inspections appear here.</p>')}
+
+/* ---------- broker ---------- */
+function auction(){const v=S.catches.filter(c=>c.verified),c=find(S.sel)||S.catches[0],t=tar(c.bid,c.kg),
+ st=x=>!x.verified?['In Transit','bg-sky-100 text-sky-800']:S.passes.some(p=>p.cid===x.id&&p.status==='escrow')?['Escrow Locked','bg-yellow-100 text-yellow-800']:['Awaiting Auction','bg-slate-100 text-slate-700'];
+ return h1('Consignations & Live Bids','Bantay sa bulk lots, malinaw na Taripa, at bayad na held hanggang masuri.')+`<div class="grid grid-cols-3 gap-3 mb-4">${[['Active lots',v.length],['Tubs in stock',S.catches.reduce((a,x)=>a+x.tubs,0)],['Live bids','● Live']].map(([a,b])=>`<div class="card p-4"><div class="text-xs font-mono text-slate-500">${a}</div><div class="font-mono text-2xl font-bold">${b}</div></div>`).join('')}</div>
+<div class="grid lg:grid-cols-2 gap-4 items-start"><div class="card overflow-x-auto"><table class="w-full text-sm"><thead class="text-xs font-mono text-left text-slate-500"><tr><th class="p-3">Batch</th><th>Volume</th><th>Top bid</th><th>Status</th></tr></thead><tbody>${S.catches.map(x=>{const s=st(x);return`<tr onclick="S.sel='${x.id}';render()" class="border-t cursor-pointer ${x.id===c.id?'bg-teal-50':'hover:bg-slate-50'}"><td class="p-3"><b class="font-mono">${x.id}</b><br><span class="text-xs">${x.name}</span></td><td>${x.kg}kg × ${x.tubs}</td><td class="font-mono">${fmt(x.bid)}</td><td><span class="badge ${s[1]}">${s[0]}</span></td></tr>`}).join('')}</tbody></table></div>
+<div class="card p-5"><div class="font-mono text-xs text-slate-500">SELECTED · ${c.id}</div><h2 class="font-semibold text-lg">${c.name}</h2><p class="text-xs italic">${c.sci} · ${c.src}</p>
+<div class="grid grid-cols-2 gap-3 my-3"><div class="bg-slate-100 rounded-lg p-3 text-sm">Starting<br><b class="font-mono text-lg">${fmt(c.start)}/kg</b></div><div class="bg-teal-50 border border-teal-200 rounded-lg p-3 text-sm">Current top bid<br><b class="font-mono text-lg">${fmt(c.bid)}/kg</b></div></div>
+<div class="grid grid-cols-2 gap-2"><button class="btn2" onclick="editStart('${c.id}')">Edit starting bid</button><button class="btn2" onclick="raiseBid('${c.id}')">+₱5 bid</button></div>
+<div class="mt-3 text-xs font-mono">BID HISTORY</div>${(c.hist.length?c.hist:['No new bids yet.']).slice(-5).reverse().map(h=>`<div class="text-sm py-1 border-b">${h}</div>`).join('')}
+<div class="mt-4 text-xs font-mono">TARIPA @ ${c.kg} KG, TOP BID</div>${[['Base fish price',t.base],['Port fee',t.port],['Commission (5%)',t.comm],['Ice / handling',t.ice]].map(([a,b])=>`<div class="flex justify-between text-sm py-1"><span>${a}</span><span class="font-mono">${fmt(b)}</span></div>`).join('')}<div class="flex justify-between font-bold border-t pt-2"><span>Total payable</span><span class="font-mono">${fmt(t.total)}</span></div></div></div>`}
+async function editStart(id){const c=find(id),v=parseFloat(prompt('New starting bid (₱/kg)',c.start));if(!v||v<=0)return toast('Enter a positive amount.',1);const{error}=await sb.from('catches').update({start:v,bid:Math.max(c.bid,v)}).eq('id',id);if(error)return toast(error.message,1);toast('Starting bid updated.');load(1)}
+async function raiseBid(id){const c=find(id),{error}=await sb.from('catches').update({bid:c.bid+5}).eq('id',id);if(error)return toast(error.message,1);load(1)}
+
+/* ---------- router ---------- */
+function view(){const t=S.tab;
+ if(!S.catches.length&&!['intake','sync','passes'].includes(t)&&!(t==='quality'&&S.role==='checker'))return h1('No catches yet','Waiting for a Pier Checker to log the first landing.');
+ if(t==='floor')return floor(0);if(t==='hati')return floor(1);if(t==='taripa')return taripaV();if(t==='sync')return syncV();if(t==='passes')return passes();
+ if(t==='intake')return intake();if(t==='auction')return auction();
+ if(t==='quality')return S.role==='checker'?register():h1('Suri-Isda Quality Guard','Inspection status of every batch on the floor.')+`<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">${S.catches.map(c=>cardC(c,0)).join('')}</div>`}
+function render(){save();const a=$('#app');
+ if(!S.user){a.innerHTML=head()+login();return}
+ a.innerHTML=head()+nav()+`<main class="max-w-6xl mx-auto p-4 pb-28">${view()}</main>`+bottom();if(S.tab==='taripa')calc()}
+addEventListener('online',()=>{render();if(S.user&&S.queue.length)toast('Back online. Open Offline Sync to send saved claims.')});addEventListener('offline',render);
+(async()=>{const C=window.DEAL_CONFIG||{};if(C.url&&C.key&&window.supabase){sb=supabase.createClient(new URL(C.url.trim()).origin,C.key.trim(),{auth:{persistSession:true,autoRefreshToken:true}});try{await enter()}catch(e){}}render()})();
+if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('/sw.js').catch(()=>{});
+</script></body></html>
